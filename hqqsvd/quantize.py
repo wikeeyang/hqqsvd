@@ -43,11 +43,11 @@ def quantize(W, svd_rank:int=32, svd_steps:int=8, group_size:int=128, nbits:int=
 
     W_q, scale, zero = optimize_weights(W, scale, zero, min_max, 1)
 
-    W_q = W_q.reshape((shape[1], -1, group_size))
+    W_q = W_q.reshape((shape[0], -1, group_size))
     W_q = torch.clamp(W_q, min_v, max_v).to(torch.uint8)
     W_q = pack(W_q, nbits)
-    scale = 1.0/scale.reshape((shape[1], -1, 1))
-    zero = zero.reshape((shape[1], -1, 1))
+    scale = 1.0/scale.reshape((shape[0], -1, 1))
+    zero = zero.reshape((shape[0], -1, 1))
     return W_q, svd_up.to(dtype), svd_down.to(dtype), scale.to(dtype), zero.to(dtype)
 
 
