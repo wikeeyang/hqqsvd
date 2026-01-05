@@ -160,7 +160,7 @@ optimize_weights = partial(
         "kappa": 1.01,
         "iters": 100,
         "tol": 0.0,
-        "early_stop": False,
+        "early_stop": True,
         "scale_gridsearch": False,
     },
 )
