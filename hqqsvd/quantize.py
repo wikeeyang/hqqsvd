@@ -19,7 +19,6 @@ def apply_svdquant(weight: torch.FloatTensor, rank: int = 32, niter: int = 8) ->
     return weight, svd_up, svd_down
 
 
-@torch.no_grad()
 def quantize(W, svd_rank:int=128, svd_steps:int=8, group_size:int=128, nbits:int=4):
     dtype = W.dtype
     shape = W.shape
@@ -51,7 +50,6 @@ def quantize(W, svd_rank:int=128, svd_steps:int=8, group_size:int=128, nbits:int
     return W_q, svd_up.to(dtype), svd_down.to(dtype), scale.to(dtype), zero.to(dtype)
 
 
-@torch.no_grad()
 def dequantize(W_q, svd_up, svd_down, scale, zero, q_shape, o_shape, nbits:int):
     W_f = unpack(W_q, q_shape, nbits).to(dtype=scale.dtype)
     W_f = torch.addcmul(zero, W_f, scale).view(o_shape)

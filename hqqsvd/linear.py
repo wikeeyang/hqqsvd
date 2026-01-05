@@ -24,6 +24,7 @@ class HQQSVDLinear(torch.nn.Module):
         self.bias = torch.nn.Parameter(bias, False)
         self.nbits = torch.nn.Parameter(torch.tensor([nbits]), False) # for serialization
         self._nbits = nbits
+        self.matmul_dtype = "int8"
 
     @classmethod
     def from_linear(
@@ -52,7 +53,22 @@ class HQQSVDLinear(torch.nn.Module):
             self.o_shape,
             self._nbits
         )
+    
+    def forward_int8(self, x:torch.FloatTensor):
+        x = x.view((-1, x.shape[-1]))
+        dtype = x.dtype
+        W_f = self.dequantize().T
+
+        scale_x = torch.amax(x.abs(), dim=1, keepdims=True).div_(127)
+        x_q = torch.div(x, scale_x).round_().clamp_(-128, 127).to(dtype=torch.int8)
+
+        scale_w = torch.amax(W_f.abs(), dim=0, keepdims=True).div_(127)
+        W_q = torch.div(W_f, scale_w).round_().clamp_(-128, 127).to(dtype=torch.int8)
+        
+        return (torch._int_mm(x_q, W_q).to(dtype) * scale_x * scale_w).unsqueeze(0) + self.bias
 
     @torch.compile(fullgraph=True)
-    def forward(self, x):
+    def forward(self, x:torch.FloatTensor):
+        if self.matmul_dtype == "int8" and x.numel() / x.shape[-1] >= 16:
+            return self.forward_int8(x)
         return torch.nn.functional.linear(x, self.dequantize(), self.bias)
