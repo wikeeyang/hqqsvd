@@ -1,5 +1,21 @@
 import torch
 
+TORCH_INT_MM = False
+TRITON_INT_MM = False
+try:
+    a = torch.zeros((32, 32), device="cuda", dtype=torch.int8)
+    b = torch.zeros((32, 32), device="cuda", dtype=torch.int8)
+    torch._int_mm(a, b)
+    TORCH_INT_MM = True
+except:
+    pass
+try:
+    from .triton_mm import scaled_int8_matmul
+
+    TRITON_INT_MM = True
+except:
+    pass
+
 torch._dynamo.config.cache_size_limit = max(
     8192, getattr(torch._dynamo.config, "cache_size_limit", 0)
 )
@@ -117,6 +133,23 @@ class HQQSVDLinear(torch.nn.Module):
                 W_f += lora.get_weight(W_f)
         return W_f
 
+    def forward_int8_triton(self, x: torch.FloatTensor):
+        original_shape = x.shape
+        x = x.view((-1, x.shape[-1]))
+        dtype = x.dtype
+        W_f = self.dequantize(apply_lora=True).T
+
+        scale_x = torch.amax(x.abs(), dim=1, keepdims=True).div_(127)
+        x_q = torch.div(x, scale_x).round_().clamp_(-128, 127).to(dtype=torch.int8)
+
+        scale_w = torch.amax(W_f.abs(), dim=0, keepdims=True).div_(127)
+        W_q = torch.div(W_f, scale_w).round_().clamp_(-128, 127).to(dtype=torch.int8)
+
+        output = scaled_int8_matmul(x_q, W_q, scale_x, scale_w).to(dtype)
+        output = output.view(*original_shape[:-1], -1)
+
+        return output + self.bias
+
     def forward_int8(self, x: torch.FloatTensor):
         original_shape = x.shape
         x = x.view((-1, x.shape[-1]))
@@ -128,15 +161,18 @@ class HQQSVDLinear(torch.nn.Module):
 
         scale_w = torch.amax(W_f.abs(), dim=0, keepdims=True).div_(127)
         W_q = torch.div(W_f, scale_w).round_().clamp_(-128, 127).to(dtype=torch.int8)
-        
-        output = (torch._int_mm(x_q, W_q).to(dtype) * scale_x * scale_w)
+
+        output = torch._int_mm(x_q, W_q).to(dtype) * scale_x * scale_w
         output = output.view(*original_shape[:-1], -1)
-        
+
         return output + self.bias
 
     def _forward(self, x: torch.FloatTensor):
         if self.int8_matmul and x.numel() / x.shape[-1] >= 16:
-            return self.forward_int8(x)
+            if TORCH_INT_MM:
+                return self.forward_int8(x)
+            if TRITON_INT_MM:
+                return self.forward_int8_triton(x)
         return torch.nn.functional.linear(
             x, self.dequantize(apply_lora=True), self.bias
         )
